@@ -613,9 +613,9 @@ async def quiz(interaction: Interaction):
 async def setup_quiz(
     interaction: Interaction,
     spreadsheet_id: str = SlashOption(description="ID de la feuille Google Sheets"),
+    access_role: nextcord.Role = SlashOption(description="Rôle d'accès (obligatoire)", required=True),
     waiting_roles_any: str = SlashOption(description="Rôles (OR) ex: @R1,@R2 — au moins un", required=False),
     waiting_roles_all: str = SlashOption(description="Rôles (AND) ex: @R3,@R4 — tous requis", required=False),
-    access_role: nextcord.Role = SlashOption(description="Rôle d'accès (obligatoire)", required=True),
     min_score: int = SlashOption(description="Note minimale requise", min_value=0, max_value=20, default=17),
     check_interval: int = SlashOption(description="Intervalle de vérification (secondes)", min_value=10, max_value=3600, default=60),
     log_channel: Optional[nextcord.TextChannel] = SlashOption(description="Canal de logs (optionnel)", required=False)
