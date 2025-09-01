@@ -613,7 +613,8 @@ async def quiz(interaction: Interaction):
 async def setup_quiz(
     interaction: Interaction,
     spreadsheet_id: str = SlashOption(description="ID de la feuille Google Sheets"),
-    waiting_role: nextcord.Role = SlashOption(description="Rôle d'attente (obligatoire)", required=True),
+    waiting_roles_any: str = SlashOption(description="Rôles (OR) ex: @R1,@R2 — au moins un", required=False),
+    waiting_roles_all: str = SlashOption(description="Rôles (AND) ex: @R3,@R4 — tous requis", required=False),
     access_role: nextcord.Role = SlashOption(description="Rôle d'accès (obligatoire)", required=True),
     min_score: int = SlashOption(description="Note minimale requise", min_value=0, max_value=20, default=17),
     check_interval: int = SlashOption(description="Intervalle de vérification (secondes)", min_value=10, max_value=3600, default=60),
@@ -628,9 +629,41 @@ async def setup_quiz(
         
         log_channel_id = log_channel.id if log_channel else None
         
+        # Parser les rôles d'attente (IDs depuis les mentions)
+        def parse_roles(spec: Optional[str]) -> list[int]:
+            ids: list[int] = []
+            if not spec:
+                return ids
+            parts = [p.strip() for p in spec.split(',') if p.strip()]
+            for p in parts:
+                rid = None
+                if p.startswith('<@&') and p.endswith('>'):
+                    try:
+                        rid = int(p[3:-1])
+                    except Exception:
+                        rid = None
+                if rid is None:
+                    r = nextcord.utils.get(interaction.guild.roles, name=p)
+                    if r:
+                        rid = r.id
+                if rid:
+                    ids.append(rid)
+            return ids
+
+        role_ids_any = parse_roles(waiting_roles_any)
+        role_ids_all = parse_roles(waiting_roles_all)
+        try:
+            pass
+        except Exception:
+            pass
+        if not role_ids_any and not role_ids_all:
+            await interaction.response.send_message("❌ Aucun rôle d'attente valide fourni (utilisez @Role ou le nom exact, séparés par des virgules)", ephemeral=True)
+            return
+
         await quiz_automation.setup_quiz_automation(
             spreadsheet_id=spreadsheet_id,
-            waiting_role=waiting_role,
+            waiting_role_ids_any=role_ids_any,
+            waiting_role_ids_all=role_ids_all,
             access_role=access_role,
             min_score=min_score,
             log_channel_id=log_channel_id
@@ -649,7 +682,15 @@ async def setup_quiz(
             color=0x00ff00
         )
         embed.add_field(name="📊 Feuille Google Sheets", value=spreadsheet_id, inline=False)
-        embed.add_field(name="⏳ Rôle d'attente", value=waiting_role.mention, inline=True)
+        # Construire l'affichage des rôles d'attente
+        def fmt(ids: list[int]) -> str:
+            out = []
+            for rid in ids:
+                r = interaction.guild.get_role(rid)
+                out.append(r.mention if r else f"<@&{rid}>")
+            return ", ".join(out) if out else "—"
+        embed.add_field(name="⏳ Rôles (OR)", value=fmt(role_ids_any), inline=True)
+        embed.add_field(name="⏳ Rôles (AND)", value=fmt(role_ids_all), inline=True)
         embed.add_field(name="🎯 Rôle d'accès", value=access_role.mention, inline=True)
         embed.add_field(name="📈 Note minimale", value=f"{min_score}/20", inline=True)
         embed.add_field(name="⏱️ Intervalle", value=f"{check_interval}s", inline=True)
@@ -681,7 +722,10 @@ async def quiz_status(interaction: Interaction):
         embed.add_field(name="📊 Feuille Google Sheets", value=status["spreadsheet_id"], inline=True)
         embed.add_field(name="⏱️ Intervalle de vérification", value=f"{status['check_interval']} secondes", inline=True)
         embed.add_field(name="📈 Note minimale", value=f"{status['min_score']}/20", inline=True)
-        embed.add_field(name="⏳ Rôle d'attente", value=(f"<@&{status['waiting_role_id']}>" if status.get('waiting_role_id') else "Non défini"), inline=True)
+        wr = status.get('waiting_role_ids') or []
+        wr_text = ", ".join([f"<@&{rid}>" for rid in wr]) if wr else "Non défini"
+        embed.add_field(name="⏳ Rôles d'attente", value=wr_text, inline=True)
+        embed.add_field(name="🔗 Logique", value=status.get('waiting_logic','OR'), inline=True)
         embed.add_field(name="🎯 Rôle d'accès", value=(f"<@&{status['access_role_id']}>" if status.get('access_role_id') else "Non défini"), inline=True)
         embed.add_field(name="📝 Lignes traitées", value=str(status["processed_rows"]), inline=True)
         

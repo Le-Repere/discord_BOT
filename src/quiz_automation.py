@@ -37,8 +37,12 @@ class QuizAutomation:
             "check_interval": 60,  # secondes (modifiable via commande)
             "min_score": 17,
             "max_score": 20,
-            # On stocke les IDs des rôles (obligatoires)
-            "waiting_role_id": None,
+            # Rôles d'attente (nouveau schéma)
+            "waiting_role_ids_any": [],  # au moins un de ces rôles (OR)
+            "waiting_role_ids_all": [],  # tous ces rôles (AND)
+            # Compat ancien schéma (if fallback to previous version)
+            "waiting_role_ids": [],
+            "waiting_logic": "OR",
             "access_role_id": None,
             "log_channel_id": None
         }
@@ -112,6 +116,31 @@ class QuizAutomation:
             bool: True si le membre a le rôle
         """
         return any(role.id == role_id for role in member.roles)
+
+    async def has_waiting_roles(self, member: nextcord.Member) -> bool:
+        # Nouveau schéma: OR + AND simultanés
+        any_ids = self.config.get("waiting_role_ids_any") or []
+        all_ids = self.config.get("waiting_role_ids_all") or []
+        # Compat: map ancien schéma vers nouveau si vides
+        if not any_ids and not all_ids:
+            legacy_ids = self.config.get("waiting_role_ids") or []
+            if not legacy_ids and self.config.get("waiting_role_id"):
+                legacy_ids = [self.config.get("waiting_role_id")]
+            logic = (self.config.get("waiting_logic") or "OR").upper()
+            if legacy_ids:
+                if logic == "AND":
+                    all_ids = legacy_ids
+                else:
+                    any_ids = legacy_ids
+
+        # Si rien n'est défini, refuser
+        if not any_ids and not all_ids:
+            return False
+
+        member_role_ids = {r.id for r in member.roles}
+        any_ok = True if not any_ids else bool(member_role_ids.intersection(set(any_ids)))
+        all_ok = True if not all_ids else set(all_ids).issubset(member_role_ids)
+        return any_ok and all_ok
     
     async def add_role(self, member: nextcord.Member, role_id: int) -> bool:
         """
@@ -211,16 +240,16 @@ class QuizAutomation:
             return False
         
         # Vérifier les conditions
-        if not self.config.get("waiting_role_id") or not self.config.get("access_role_id"):
+        if (not self.config.get("waiting_role_ids") and not self.config.get("waiting_role_id")) or not self.config.get("access_role_id"):
             await self.log_action("❌ Configuration incomplète: roles non définis")
             self._append_status(guild, pseudo, member, member.id if member else None, note, "ERROR", "Roles not configured")
             return False
 
-        has_waiting_role = await self.has_role(member, self.config["waiting_role_id"])
+        has_waiting_role = await self.has_waiting_roles(member)
         score_ok = note >= self.config["min_score"]
         
         if not has_waiting_role:
-            await self.log_action(f"❌ {member.name} n'a pas le rôle requis (ID: {self.config['waiting_role_id']})")
+            await self.log_action(f"❌ {member.name} n'a pas les rôles d'attente requis")
             self._append_status(guild, pseudo, member, member.id, note, "ERROR", "Missing waiting role")
             return False
         
@@ -401,7 +430,8 @@ class QuizAutomation:
     async def setup_quiz_automation(
         self,
         spreadsheet_id: str,
-        waiting_role: nextcord.Role,
+        waiting_role_ids_any: List[int],
+        waiting_role_ids_all: List[int],
         access_role: nextcord.Role,
         min_score: int = 17,
         log_channel_id: Optional[int] = None
@@ -419,7 +449,8 @@ class QuizAutomation:
         """
         self.update_config(
             spreadsheet_id=spreadsheet_id,
-            waiting_role_id=waiting_role.id,
+            waiting_role_ids_any=waiting_role_ids_any or [],
+            waiting_role_ids_all=waiting_role_ids_all or [],
             access_role_id=access_role.id,
             min_score=min_score,
             log_channel_id=log_channel_id
@@ -433,7 +464,8 @@ class QuizAutomation:
             "spreadsheet_id": self.config.get("spreadsheet_id", "Non configuré"),
             "check_interval": self.config.get("check_interval", 60),
             "min_score": self.config.get("min_score", 17),
-            "waiting_role_id": self.config.get("waiting_role_id"),
+            "waiting_role_ids_any": self.config.get("waiting_role_ids_any", []),
+            "waiting_role_ids_all": self.config.get("waiting_role_ids_all", []),
             "access_role_id": self.config.get("access_role_id"),
             "processed_rows": len(self.processed_rows),
             "is_running": self.check_quiz_results.is_running()
